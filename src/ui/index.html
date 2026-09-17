@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>KoneqtiSEO Launcher</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f0f1a; color: #e0e0e0; height: 100vh; display: flex; flex-direction: column; }
+    .header { background: #1a1a2e; padding: 20px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid #2a2a3e; }
+    .logo { font-size: 20px; font-weight: 800; color: white; }
+    .logo span { color: #7c4dff; }
+    .status-dot { width: 10px; height: 10px; border-radius: 50%; background: #f44336; margin-left: auto; transition: background 0.3s; }
+    .status-dot.connected { background: #4caf50; }
+    .content { flex: 1; padding: 24px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; }
+    .card { background: #1a1a2e; border-radius: 12px; padding: 20px; border: 1px solid #2a2a3e; }
+    .card-title { font-size: 13px; font-weight: 700; color: #7c4dff; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 1px; }
+    label { display: block; font-size: 12px; color: #888; margin-bottom: 6px; }
+    input { width: 100%; padding: 10px 14px; border-radius: 8px; border: 1px solid #2a2a3e; background: #0f0f1a; color: white; font-size: 14px; outline: none; }
+    input:focus { border-color: #7c4dff; }
+    .btn { width: 100%; padding: 12px; border-radius: 8px; border: none; cursor: pointer; font-size: 15px; font-weight: 700; transition: all 0.2s; }
+    .btn-primary { background: #7c4dff; color: white; }
+    .btn-primary:hover { background: #6c3dff; }
+    .btn-danger { background: #f44336; color: white; }
+    .btn-danger:hover { background: #d32f2f; }
+    .status-msg { font-size: 13px; color: #888; padding: 10px; background: #0f0f1a; border-radius: 8px; min-height: 40px; }
+    .status-msg.ok { color: #4caf50; }
+    .status-msg.err { color: #f44336; }
+    .metric { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #2a2a3e; }
+    .metric:last-child { border: none; }
+    .metric-val { font-weight: 700; color: white; }
+    .chrome-status { font-size: 12px; margin-top: 8px; }
+    .chrome-found { color: #4caf50; }
+    .chrome-missing { color: #f44336; }
+    .footer { padding: 12px 24px; text-align: center; font-size: 11px; color: #444; border-top: 1px solid #2a2a3e; }
+    a { color: #7c4dff; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="logo">Koneqti<span>SEO</span></div>
+    <div style="font-size: 12px; color: #666">Launcher v1.0</div>
+    <div class="status-dot" id="statusDot"></div>
+  </div>
+
+  <div class="content">
+    <!-- Connection -->
+    <div class="card">
+      <div class="card-title">Connection</div>
+      <div style="margin-bottom: 12px;">
+        <label>API Key</label>
+        <input type="password" id="apiKey" placeholder="Paste your API key from koneqtiseo.com/settings" />
+      </div>
+      <div style="margin-bottom: 16px;">
+        <label>Gateway URL</label>
+        <input type="text" id="gatewayUrl" value="wss://gateway.koneqtiseo.com" />
+      </div>
+      <button class="btn btn-primary" id="connectBtn" onclick="toggleConnect()">Connect</button>
+      <div id="statusMsg" class="status-msg" style="margin-top: 12px;">Enter your API key and click Connect.</div>
+    </div>
+
+    <!-- Stats -->
+    <div class="card">
+      <div class="card-title">Status</div>
+      <div class="metric"><span>Jobs Completed</span><span class="metric-val" id="jobCount">0</span></div>
+      <div class="metric"><span>Last Job</span><span class="metric-val" id="lastJob">—</span></div>
+      <div class="metric"><span>Platform</span><span class="metric-val">${process.platform}</span></div>
+      <div id="chromeStatus" class="chrome-status">Checking Chrome...</div>
+    </div>
+
+    <!-- Help -->
+    <div class="card">
+      <div class="card-title">How It Works</div>
+      <p style="font-size: 13px; color: #888; line-height: 1.7;">
+        This app connects your PC's Chrome browser to the KoneqtiSEO engine.
+        Jobs run in your Chrome using your real IP and accounts — no proxies needed.
+        Keep this app running while jobs execute.
+      </p>
+      <p style="font-size: 12px; color: #555; margin-top: 8px;">
+        Get your API key at <a href="https://koneqtiseo.com/settings" onclick="require('electron').shell.openExternal('https://koneqtiseo.com/settings'); return false;">koneqtiseo.com/settings</a>
+      </p>
+    </div>
+  </div>
+
+  <div class="footer">KoneqtiSEO Launcher — minimizes to system tray when closed</div>
+
+  <script>
+    const { ipcRenderer } = require('electron');
+    let connected = false;
+
+    // Load saved settings
+    ipcRenderer.invoke('get-settings').then(s => {
+      if (s.apiKey) document.getElementById('apiKey').value = s.apiKey;
+      if (s.gatewayUrl) document.getElementById('gatewayUrl').value = s.gatewayUrl;
+    });
+
+    // Check Chrome
+    ipcRenderer.invoke('get-status').then(s => {
+      const el = document.getElementById('chromeStatus');
+      // Chrome check done in bridge
+    });
+
+    async function toggleConnect() {
+      if (connected) {
+        await ipcRenderer.invoke('disconnect');
+        setDisconnected('Disconnected.');
+        return;
+      }
+
+      const apiKey = document.getElementById('apiKey').value.trim();
+      const gatewayUrl = document.getElementById('gatewayUrl').value.trim();
+
+      if (!apiKey) {
+        setStatus('Please enter your API key.', 'err');
+        return;
+      }
+
+      setStatus('Connecting...', '');
+      const result = await ipcRenderer.invoke('connect', { apiKey, gatewayUrl });
+      if (!result.ok) setStatus(`Failed: ${result.error}`, 'err');
+    }
+
+    ipcRenderer.on('status', (_, data) => {
+      if (data.connected) {
+        connected = true;
+        setStatus(data.message, 'ok');
+        document.getElementById('statusDot').classList.add('connected');
+        document.getElementById('connectBtn').textContent = 'Disconnect';
+        document.getElementById('connectBtn').className = 'btn btn-danger';
+      } else {
+        setDisconnected(data.message);
+      }
+    });
+
+    ipcRenderer.on('job-complete', (_, data) => {
+      const count = parseInt(document.getElementById('jobCount').textContent || '0') + 1;
+      document.getElementById('jobCount').textContent = count;
+      document.getElementById('lastJob').textContent = data.type;
+    });
+
+    function setStatus(msg, type) {
+      const el = document.getElementById('statusMsg');
+      el.textContent = msg;
+      el.className = 'status-msg' + (type ? ' ' + type : '');
+    }
+
+    function setDisconnected(msg) {
+      connected = false;
+      setStatus(msg || 'Disconnected.', 'err');
+      document.getElementById('statusDot').classList.remove('connected');
+      document.getElementById('connectBtn').textContent = 'Connect';
+      document.getElementById('connectBtn').className = 'btn btn-primary';
+    }
+  </script>
+</body>
+</html>
