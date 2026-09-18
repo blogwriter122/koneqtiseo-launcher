@@ -8,6 +8,9 @@ on:
         required: true
         default: '1.0.3'
 
+permissions:
+  contents: write
+
 jobs:
   build-windows:
     runs-on: windows-latest
@@ -18,8 +21,6 @@ jobs:
           node-version: 20
       - run: npm install
       - run: npm run build-win
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/upload-artifact@v4
         with:
           name: windows-installer
@@ -34,8 +35,6 @@ jobs:
           node-version: 20
       - run: npm install
       - run: npm run build-mac
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/upload-artifact@v4
         with:
           name: mac-installer
@@ -50,8 +49,6 @@ jobs:
           node-version: 20
       - run: npm install
       - run: npm run build-linux
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/upload-artifact@v4
         with:
           name: linux-installer
@@ -60,6 +57,8 @@ jobs:
   create-release:
     needs: [build-windows, build-mac, build-linux]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -68,20 +67,23 @@ jobs:
         with:
           tag_name: v${{ github.event.inputs.version }}
           name: KoneqtiSEO Launcher v${{ github.event.inputs.version }}
-          files: artifacts/**/*
+          generate_release_notes: false
+          files: |
+            artifacts/windows-installer/*.exe
+            artifacts/mac-installer/*.dmg
+            artifacts/linux-installer/*.AppImage
           body: |
             ## KoneqtiSEO Launcher v${{ github.event.inputs.version }}
 
             ### Download for your OS:
             - **Windows**: `KoneqtiSEO-Launcher-Setup.exe`
-            - **macOS**: `KoneqtiSEO-Launcher.dmg`  
+            - **macOS**: `KoneqtiSEO-Launcher.dmg`
             - **Linux**: `KoneqtiSEO-Launcher.AppImage`
 
             ### Setup (2 minutes):
-            1. Download and install for your OS
+            1. Download and install
             2. Open the launcher
             3. Go to **koneqtiseo.com/settings** → copy your API key
-            4. Paste key into launcher → click **Connect**
-            5. Green dot = connected ✅
+            4. Paste key → click **Connect** → green dot ✅
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
