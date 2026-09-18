@@ -5,9 +5,9 @@
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "build-win": "electron-builder --win --publish always",
-    "build-mac": "electron-builder --mac --publish always",
-    "build-linux": "electron-builder --linux --publish always"
+    "build-win": "electron-builder --win",
+    "build-mac": "electron-builder --mac",
+    "build-linux": "electron-builder --linux"
   },
   "dependencies": {
     "ws": "^8.14.0"
@@ -29,11 +29,6 @@
     },
     "linux": {
       "target": [{ "target": "AppImage", "arch": ["x64"] }]
-    },
-    "publish": {
-      "provider": "github",
-      "owner": "blogwriter122",
-      "repo": "koneqtiseo-launcher"
     }
   }
 }
