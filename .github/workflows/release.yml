@@ -1,49 +1,87 @@
 name: Build and Release
 
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version (e.g. 1.0.3)'
+        required: true
+        default: '1.0.3'
 
 jobs:
-  release:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
-
+  build-windows:
+    runs-on: windows-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Build Windows
-        if: matrix.os == 'windows-latest'
-        run: npm run build-win
+      - run: npm install
+      - run: npm run build-win
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build macOS
-        if: matrix.os == 'macos-latest'
-        run: npm run build-mac
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build Linux
-        if: matrix.os == 'ubuntu-latest'
-        run: npm run build-linux
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: launcher-${{ matrix.os }}
-          path: dist/
+          name: windows-installer
+          path: dist/*.exe
+
+  build-mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - run: npm run build-mac
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-installer
+          path: dist/*.dmg
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - run: npm run build-linux
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-installer
+          path: dist/*.AppImage
+
+  create-release:
+    needs: [build-windows, build-mac, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ github.event.inputs.version }}
+          name: KoneqtiSEO Launcher v${{ github.event.inputs.version }}
+          files: artifacts/**/*
+          body: |
+            ## KoneqtiSEO Launcher v${{ github.event.inputs.version }}
+
+            ### Download for your OS:
+            - **Windows**: `KoneqtiSEO-Launcher-Setup.exe`
+            - **macOS**: `KoneqtiSEO-Launcher.dmg`  
+            - **Linux**: `KoneqtiSEO-Launcher.AppImage`
+
+            ### Setup (2 minutes):
+            1. Download and install for your OS
+            2. Open the launcher
+            3. Go to **koneqtiseo.com/settings** → copy your API key
+            4. Paste key into launcher → click **Connect**
+            5. Green dot = connected ✅
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
