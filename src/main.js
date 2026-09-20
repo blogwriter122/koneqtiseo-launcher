@@ -5,7 +5,7 @@
 
 const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
-const { connectToVPS, disconnect, getStatus } = require('./bridge');
+const { connectToVPS, disconnect, getStatus, setEventHandler } = require('./bridge');
 const Store = require('./store');
 
 let mainWindow = null;
@@ -62,11 +62,13 @@ ipcMain.handle('save-settings', (_, settings) => {
   store.save(settings);
   return { ok: true };
 });
-ipcMain.handle('connect', async (_, { apiKey, gatewayUrl }) => {
-  store.save({ apiKey, gatewayUrl });
-  return connectToVPS(gatewayUrl, apiKey, (event, data) => {
-    mainWindow?.webContents?.send(event, data);
+ipcMain.handle('connect', async (_, { apiKey }) => {
+  store.save({ apiKey });
+  setEventHandler((event, data) => {
+    mainWindow?.webContents?.send('bridge-event', { event, data });
   });
+  connectToVPS(apiKey);
+  return { ok: true };
 });
 ipcMain.handle('disconnect', () => disconnect());
 ipcMain.handle('get-status', () => getStatus());
