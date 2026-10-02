@@ -1,6 +1,6 @@
 {
   "name": "koneqtiseo-launcher",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "KoneqtiSEO Chrome Launcher — connects your PC to the SEO engine",
   "main": "src/main.js",
   "scripts": {
