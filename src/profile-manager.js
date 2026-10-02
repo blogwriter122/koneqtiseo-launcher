@@ -459,6 +459,11 @@ async function openRegularChrome(profile) {
     '--no-service-autorun',
     '--password-store=basic',
   ];
+  // Test/dev only: extra Chrome flags as a JSON array (e.g. the local end-to-end stack maps
+  // claude.ai to a fake server). Unset for normal users.
+  if (process.env.KONEQTISEO_EXTRA_CHROME_ARGS) {
+    try { args.push(...JSON.parse(process.env.KONEQTISEO_EXTRA_CHROME_ARGS)); } catch (_) {}
+  }
   if (!IS_WINDOWS) {
     args.push('--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu');
   } else {
