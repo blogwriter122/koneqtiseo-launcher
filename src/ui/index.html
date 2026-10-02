@@ -38,7 +38,7 @@
 <body>
   <div class="header">
     <div class="logo">Koneqti<span>SEO</span></div>
-    <div style="font-size: 12px; color: #666">Launcher v1.0</div>
+    <div style="font-size: 12px; color: #666">Launcher v1.0.6</div>
     <div class="status-dot" id="statusDot"></div>
   </div>
 
@@ -63,8 +63,8 @@
       <div class="card-title">Status</div>
       <div class="metric"><span>Jobs Completed</span><span class="metric-val" id="jobCount">0</span></div>
       <div class="metric"><span>Last Job</span><span class="metric-val" id="lastJob">—</span></div>
-      <div class="metric"><span>Platform</span><span class="metric-val">${process.platform}</span></div>
-      <div id="chromeStatus" class="chrome-status">Checking Chrome...</div>
+      <div class="metric"><span>Plan</span><span class="metric-val" id="plan">—</span></div>
+      <div class="metric"><span>Platform</span><span class="metric-val" id="platform">—</span></div>
     </div>
 
     <!-- Help -->
@@ -93,11 +93,10 @@
       if (s.gatewayUrl) document.getElementById('gatewayUrl').value = s.gatewayUrl;
     });
 
-    // Check Chrome
-    ipcRenderer.invoke('get-status').then(s => {
-      const el = document.getElementById('chromeStatus');
-      // Chrome check done in bridge
-    });
+    document.getElementById('platform').textContent = process.platform;
+
+    // Current bridge state (the launcher may already be connected with the saved key)
+    ipcRenderer.invoke('get-status').then(applyStatus);
 
     async function toggleConnect() {
       if (connected) {
@@ -119,22 +118,28 @@
       if (!result.ok) setStatus(`Failed: ${result.error}`, 'err');
     }
 
-    ipcRenderer.on('status', (_, data) => {
+    function applyStatus(data) {
+      if (!data) return;
+      if (data.plan) document.getElementById('plan').textContent = data.plan.charAt(0).toUpperCase() + data.plan.slice(1);
       if (data.connected) {
         connected = true;
-        setStatus(data.message, 'ok');
+        setStatus('Connected to KoneqtiSEO.', 'ok');
         document.getElementById('statusDot').classList.add('connected');
         document.getElementById('connectBtn').textContent = 'Disconnect';
         document.getElementById('connectBtn').className = 'btn btn-danger';
       } else {
-        setDisconnected(data.message);
+        setDisconnected(data.error ? `Not connected: ${data.error}. Copy a new key from koneqtiseo.com/settings.` : 'Not connected.');
       }
-    });
+    }
 
-    ipcRenderer.on('job-complete', (_, data) => {
-      const count = parseInt(document.getElementById('jobCount').textContent || '0') + 1;
-      document.getElementById('jobCount').textContent = count;
-      document.getElementById('lastJob').textContent = data.type;
+    // The main process forwards every bridge event on one channel
+    ipcRenderer.on('bridge-event', (_, { event, data }) => {
+      if (event === 'status') applyStatus(data);
+      if (event === 'job') {
+        const count = parseInt(document.getElementById('jobCount').textContent || '0') + 1;
+        document.getElementById('jobCount').textContent = count;
+        document.getElementById('lastJob').textContent = data.type;
+      }
     });
 
     function setStatus(msg, type) {

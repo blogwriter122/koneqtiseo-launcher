@@ -13,16 +13,24 @@
 const WebSocket = require('ws');
 const {
   openChrome, closeBrowser, resolveProfileDir, cleanStaleLocks,
-  markProfileExitClean, listLocalProfiles,
+  markProfileExitClean, listLocalProfiles, findFreePort,
 } = require('./profile-manager');
 
-const GATEWAY_WS = process.env.GATEWAY_WS || 'wss://gateway.koneqtiseo.com/ws';
+const DEFAULT_GATEWAY_WS = process.env.GATEWAY_WS || 'wss://gateway.koneqtiseo.com/ws';
+
+// Accept "wss://gateway.koneqtiseo.com" or ".../ws" from settings; always connect to /ws
+function gatewayWsUrl(url) {
+  const u = String(url || '').trim() || DEFAULT_GATEWAY_WS;
+  return /\/ws\/?$/.test(u) ? u : u.replace(/\/+$/, '') + '/ws';
+}
 
 let ws = null;
 let status = { connected: false, jobsCompleted: 0, lastJob: null, openProfiles: [] };
 let reconnectTimer = null;
 let onEvent = null;
 let apiKey = null;
+let gatewayUrl = null;
+let manualDisconnect = false;   // user pressed Disconnect → don't auto-reconnect
 
 // Track which profiles are currently open { name → { browser, page, port } }
 const openProfiles = new Map();
@@ -33,15 +41,19 @@ function getStatus() { return { ...status, openProfiles: Array.from(openProfiles
 /**
  * Connect to the VPS gateway
  */
-function connectToVPS(key) {
+function connectToVPS(key, url) {
   apiKey = key;
-  if (ws) { try { ws.close(); } catch (_) {} }
+  if (url !== undefined) gatewayUrl = url;
+  manualDisconnect = false;
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  if (ws) { const old = ws; ws = null; try { old.close(); } catch (_) {} }
 
-  ws = new WebSocket(GATEWAY_WS, {
+  const sock = new WebSocket(gatewayWsUrl(gatewayUrl), {
     headers: { 'x-api-key': key },
   });
+  ws = sock;
 
-  ws.on('open', () => {
+  sock.on('open', () => {
     status.connected = true;
     onEvent?.('status', status);
     // Register this launcher with the user's key
@@ -49,25 +61,35 @@ function connectToVPS(key) {
     console.log('[bridge] Connected to gateway, registered');
   });
 
-  ws.on('message', async (raw) => {
+  sock.on('message', async (raw) => {
     let job;
     try { job = JSON.parse(raw.toString()); } catch (_) { return; }
-    if (job.type === 'registered') return;                                 // gateway confirmation, not a job
+    if (job.type === 'registered') {                                       // gateway confirmation, not a job
+      status.userId = job.userId || null;
+      status.plan = job.plan || null;
+      onEvent?.('status', status);
+      return;
+    }
     if (job.type && job.type.startsWith('cdp_')) return handleCdp(job);   // browser relay
     await handleJob(job);
   });
 
-  ws.on('close', () => {
+  sock.on('close', (code, reason) => {
+    if (sock !== ws) return;   // an older socket we replaced — ignore
     for (const [, sess] of cdpSessions) { try { sess.local.close(); } catch (_) {} }
     cdpSessions.clear();
     status.connected = false;
+    // 4001 = gateway rejected the key (unknown or revoked): retrying won't help
+    status.error = code === 4001 ? (reason?.toString() || 'API key rejected') : null;
     onEvent?.('status', status);
+    if (manualDisconnect || code === 4001) { console.log(`[bridge] Disconnected (${code})`); return; }
     console.log('[bridge] Disconnected — reconnecting in 5s');
     scheduleReconnect();
   });
 
-  ws.on('error', (err) => {
+  sock.on('error', (err) => {
     console.error('[bridge] WS error:', err.message);
+    if (sock !== ws) return;
     status.connected = false;
     onEvent?.('status', status);
   });
@@ -77,11 +99,13 @@ function scheduleReconnect() {
   if (reconnectTimer) return;
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
-    if (apiKey) connectToVPS(apiKey);
+    if (apiKey && !manualDisconnect) connectToVPS(apiKey);
   }, 5000);
 }
 
 function disconnect() {
+  manualDisconnect = true;
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
   if (ws) { try { ws.close(); } catch (_) {} }
   ws = null;
   status.connected = false;
@@ -183,13 +207,19 @@ async function openProfileForLogin(job) {
 async function ensureProfileOpen(job) {
   const name = job.profile_name || job.name;
   if (openProfiles.has(name)) {
-    return { ready: true, name, port: openProfiles.get(name).port, reused: true };
+    const known = openProfiles.get(name);
+    // The user may have closed that Chrome window since — only reuse it if it still answers
+    if (known.port && await chromeWsUrl(known.port).then(() => true, () => false)) {
+      return { ready: true, name, port: known.port, reused: true };
+    }
+    openProfiles.delete(name);
   }
 
   const profile = {
     name,
     dir: job.profile_dir || job.dir,
-    port: job.profile_port || job.port,
+    // The relay needs to know the debug port, so pick one now if none was given
+    port: job.profile_port || job.port || await findFreePort(),
     browserType: job.browser_type || 'chrome',
     adsPowerId: job.ads_power_id,
     ixProfileId: job.ix_profile_id,
@@ -227,10 +257,12 @@ function relaySend(obj) {
 
 function chromeWsUrl(port) {
   return new Promise((resolve, reject) => {
-    http.get(`http://127.0.0.1:${port}/json/version`, (r) => {
+    const req = http.get(`http://127.0.0.1:${port}/json/version`, (r) => {
       let b = ''; r.on('data', c => b += c);
       r.on('end', () => { try { resolve(JSON.parse(b).webSocketDebuggerUrl); } catch (e) { reject(e); } });
-    }).on('error', reject);
+    });
+    req.on('error', reject);
+    req.setTimeout(3000, () => req.destroy(new Error(`Chrome on port ${port} did not answer`)));
   });
 }
 
@@ -239,7 +271,8 @@ async function handleCdp(msg) {
   if (msg.type === 'cdp_open') {
     try {
       const p = msg.profile || {};
-      const opened = await ensureProfileOpen({ profile_name: p.name, profile_dir: p.dir, profile_port: p.port, browser_type: p.browserType, ads_power_id: p.adsPowerId, ix_profile_id: p.ixProfileId });
+      // p.dir is a path on the VPS, not on this PC — the folder is picked here by profile name
+      const opened = await ensureProfileOpen({ profile_name: p.name, profile_port: p.port, browser_type: p.browserType, ads_power_id: p.adsPowerId, ix_profile_id: p.ixProfileId });
       const url = await chromeWsUrl(opened.port);
       const local = new WebSocket(url, { perMessageDeflate: false, maxPayload: 512 * 1024 * 1024 });
       cdpSessions.set(session, { local, profileName: p.name });

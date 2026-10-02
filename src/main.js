@@ -62,12 +62,14 @@ ipcMain.handle('save-settings', (_, settings) => {
   store.save(settings);
   return { ok: true };
 });
-ipcMain.handle('connect', async (_, { apiKey }) => {
-  store.save({ apiKey });
-  setEventHandler((event, data) => {
-    mainWindow?.webContents?.send('bridge-event', { event, data });
-  });
-  connectToVPS(apiKey);
+// Bridge events (status, jobs, relay) → UI window
+setEventHandler((event, data) => {
+  mainWindow?.webContents?.send('bridge-event', { event, data });
+});
+
+ipcMain.handle('connect', async (_, { apiKey, gatewayUrl }) => {
+  store.save({ apiKey, ...(gatewayUrl ? { gatewayUrl } : {}) });
+  connectToVPS(apiKey, gatewayUrl);
   return { ok: true };
 });
 ipcMain.handle('disconnect', () => disconnect());
@@ -76,6 +78,9 @@ ipcMain.handle('get-status', () => getStatus());
 app.whenReady().then(() => {
   createWindow();
   createTray();
+  // Reconnect with the saved key after a restart, so jobs don't wait for a click
+  const saved = store.get();
+  if (saved.apiKey) connectToVPS(saved.apiKey, saved.gatewayUrl);
 });
 
 app.on('window-all-closed', (e) => e.preventDefault());
