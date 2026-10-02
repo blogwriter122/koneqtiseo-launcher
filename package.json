@@ -1,6 +1,6 @@
 {
   "name": "koneqtiseo-launcher",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "KoneqtiSEO Chrome Launcher — connects your PC to the SEO engine",
   "main": "src/main.js",
   "scripts": {
@@ -21,15 +21,18 @@
     "appId": "com.koneqtiseo.launcher",
     "productName": "KoneqtiSEO Launcher",
     "directories": { "output": "dist" },
-    "files": ["src/**/*", "package.json"],
+    "files": ["src/**/*", "assets/**/*", "package.json"],
     "win": {
-      "target": [{ "target": "nsis", "arch": ["x64"] }]
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "artifactName": "KoneqtiSEO-Launcher-Setup.${ext}"
     },
     "mac": {
-      "target": [{ "target": "dmg", "arch": ["x64", "arm64"] }]
+      "target": [{ "target": "dmg", "arch": ["universal"] }],
+      "artifactName": "KoneqtiSEO-Launcher.${ext}"
     },
     "linux": {
-      "target": [{ "target": "AppImage", "arch": ["x64"] }]
+      "target": [{ "target": "AppImage", "arch": ["x64"] }],
+      "artifactName": "KoneqtiSEO-Launcher.${ext}"
     }
   }
 }
