@@ -52,10 +52,14 @@ function connectToVPS(key) {
   ws.on('message', async (raw) => {
     let job;
     try { job = JSON.parse(raw.toString()); } catch (_) { return; }
+    if (job.type === 'registered') return;                                 // gateway confirmation, not a job
+    if (job.type && job.type.startsWith('cdp_')) return handleCdp(job);   // browser relay
     await handleJob(job);
   });
 
   ws.on('close', () => {
+    for (const [, sess] of cdpSessions) { try { sess.local.close(); } catch (_) {} }
+    cdpSessions.clear();
     status.connected = false;
     onEvent?.('status', status);
     console.log('[bridge] Disconnected — reconnecting in 5s');
@@ -208,6 +212,53 @@ async function closeProfile(name) {
   } catch (_) {}
   openProfiles.delete(name);
   return { closed: true, name };
+}
+
+// ─── CDP relay (Model A) ─────────────────────────────────────────────────────
+// The VPS drives a Chrome profile on THIS PC through the gateway:
+//   VPS Playwright ⇄ gateway /cdp ⇄ (this WebSocket) ⇄ local Chrome DevTools
+// Chrome runs here: the user's IP, the user's accounts. No ports are opened to the internet.
+const http = require('http');
+const cdpSessions = new Map();   // session → { local, profileName }
+
+function relaySend(obj) {
+  if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+}
+
+function chromeWsUrl(port) {
+  return new Promise((resolve, reject) => {
+    http.get(`http://127.0.0.1:${port}/json/version`, (r) => {
+      let b = ''; r.on('data', c => b += c);
+      r.on('end', () => { try { resolve(JSON.parse(b).webSocketDebuggerUrl); } catch (e) { reject(e); } });
+    }).on('error', reject);
+  });
+}
+
+async function handleCdp(msg) {
+  const { session } = msg;
+  if (msg.type === 'cdp_open') {
+    try {
+      const p = msg.profile || {};
+      const opened = await ensureProfileOpen({ profile_name: p.name, profile_dir: p.dir, profile_port: p.port, browser_type: p.browserType });
+      const url = await chromeWsUrl(opened.port);
+      const local = new WebSocket(url, { perMessageDeflate: false, maxPayload: 512 * 1024 * 1024 });
+      cdpSessions.set(session, { local, profileName: p.name });
+      local.on('open', () => {
+        relaySend({ type: 'cdp_ready', session });
+        onEvent?.('relay', { session, profile: p.name, state: 'connected' });
+      });
+      local.on('message', (data) => relaySend({ type: 'cdp_msg', session, data: data.toString() }));
+      local.on('close', () => { cdpSessions.delete(session); relaySend({ type: 'cdp_closed', session }); });
+      local.on('error', (e) => relaySend({ type: 'cdp_error', session, error: e.message }));
+    } catch (e) {
+      relaySend({ type: 'cdp_error', session, error: e.message });
+    }
+    return;
+  }
+  const sess = cdpSessions.get(session);
+  if (!sess) return;
+  if (msg.type === 'cdp_msg') { try { sess.local.send(msg.data); } catch (_) {} }
+  if (msg.type === 'cdp_close') { try { sess.local.close(); } catch (_) {} cdpSessions.delete(session); }
 }
 
 module.exports = { connectToVPS, disconnect, getStatus, setEventHandler };
