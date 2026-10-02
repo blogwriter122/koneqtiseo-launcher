@@ -70,6 +70,11 @@ function connectToVPS(key, url) {
       onEvent?.('status', status);
       return;
     }
+    if (job.type === 'error') {                                            // gateway refused us (e.g. invalid key)
+      status.error = job.error === 'invalid_key' ? 'API key not recognised' : job.error;
+      onEvent?.('status', status);
+      return;
+    }
     if (job.type && job.type.startsWith('cdp_')) return handleCdp(job);   // browser relay
     await handleJob(job);
   });
