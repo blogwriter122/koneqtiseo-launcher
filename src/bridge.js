@@ -239,7 +239,7 @@ async function handleCdp(msg) {
   if (msg.type === 'cdp_open') {
     try {
       const p = msg.profile || {};
-      const opened = await ensureProfileOpen({ profile_name: p.name, profile_dir: p.dir, profile_port: p.port, browser_type: p.browserType });
+      const opened = await ensureProfileOpen({ profile_name: p.name, profile_dir: p.dir, profile_port: p.port, browser_type: p.browserType, ads_power_id: p.adsPowerId, ix_profile_id: p.ixProfileId });
       const url = await chromeWsUrl(opened.port);
       const local = new WebSocket(url, { perMessageDeflate: false, maxPayload: 512 * 1024 * 1024 });
       cdpSessions.set(session, { local, profileName: p.name });
