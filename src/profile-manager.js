@@ -5,7 +5,7 @@
  */
 
 const { chromium } = require('playwright');
-const { spawn, execSync } = require('child_process');
+const { spawn, execSync, execFileSync } = require('child_process');
 const http = require('http');
 const net = require('net');
 const fs = require('fs');
@@ -14,9 +14,11 @@ const os = require('os');
 
 // Auto-detect Chrome path by OS
 const IS_WINDOWS = os.platform() === 'win32';
-const CHROME_PATH = IS_WINDOWS
+const CHROME_PATH = process.env.CHROME_PATH || (IS_WINDOWS
   ? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
-  : '/usr/bin/google-chrome';
+  : os.platform() === 'darwin'
+    ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+    : '/usr/bin/google-chrome');
 
 // ── Profile/port reliability helpers ──────────────────────────────
 // Base profile dir: a profile you log into ONCE; new profiles are cloned from it.
@@ -178,7 +180,7 @@ function killChromeUsingDir(dir) {
         }
       }
     } else {
-      const out = execSync(`pgrep -f "user-data-dir=${dir}"`, { stdio: ['ignore', 'pipe', 'ignore'], timeout: 10000 }).toString();
+      const out = execFileSync('pgrep', ['-f', `user-data-dir=${dir}`], { stdio: ['ignore', 'pipe', 'ignore'], timeout: 10000 }).toString();
       for (const pid of out.split('\n').map((s) => s.trim()).filter(Boolean)) {
         killProcessTree(parseInt(pid, 10));
       }
@@ -203,7 +205,7 @@ function killProcessOnPort(port) {
       }
       for (const pid of pids) killProcessTree(parseInt(pid, 10));
     } else {
-      const out = execSync(`lsof -ti tcp:${port}`, { stdio: ['ignore', 'pipe', 'ignore'], timeout: 10000 }).toString();
+      const out = execFileSync('lsof', ['-ti', `tcp:${port}`], { stdio: ['ignore', 'pipe', 'ignore'], timeout: 10000 }).toString();
       for (const pid of out.split('\n').map((s) => s.trim()).filter(Boolean)) {
         killProcessTree(parseInt(pid, 10));
       }
@@ -442,7 +444,6 @@ async function openRegularChrome(profile) {
     // from restoring the previous (crashed) session, which is what triggers the
     // "Restore pages?" prompt in current Chrome builds.
     '--hide-crash-restore-bubble',
-    '--disable-features=InfiniteSessionRestore',
     // NOTE: we deliberately do NOT pass --disable-blink-features=AutomationControlled.
     // Per MDN, navigator.webdriver is only true in Chrome when --enable-automation
     // or --headless is set, or --remote-debugging-port=0 (port ZERO). We launch
@@ -453,7 +454,8 @@ async function openRegularChrome(profile) {
     '--disable-infobars',
     // Suppress the first-run "make Chrome your default / sign in" promos that
     // can also steal focus on a fresh-ish profile.
-    '--disable-features=ChromeWhatsNewUI',
+    // Chrome only honours the LAST --disable-features flag, so list them together
+    '--disable-features=InfiniteSessionRestore,ChromeWhatsNewUI',
     '--no-service-autorun',
     '--password-store=basic',
   ];
@@ -499,8 +501,26 @@ async function openRegularChrome(profile) {
   return { browser, context, page };
 }
 
+// Profile values arrive from the VPS in jobs. The port and folder end up in
+// Windows shell commands (netstat/wmic) when we clean up old Chrome processes,
+// so only accept a plain port number and a folder path without shell characters.
+function validateProfile(profile) {
+  if (profile.port !== undefined && profile.port !== null && profile.port !== '') {
+    const port = Number(profile.port);
+    if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error(`Invalid profile port: ${profile.port}`);
+    profile.port = port;
+  }
+  if (profile.dir) {
+    if (typeof profile.dir !== 'string' || /["'`$&|;<>^%!*?\r\n]/.test(profile.dir)) {
+      throw new Error('Invalid profile folder (contains characters that are not allowed)');
+    }
+  }
+  return profile;
+}
+
 // ── Main openChrome — auto-detects browser type ───────────────────
 async function openChrome(profile) {
+  validateProfile(profile);
   // Determine which browser system to use, based on profile config
   const type = profile.browserType || 'chrome'; // 'chrome' | 'adspower' | 'ix'
 
@@ -631,6 +651,7 @@ async function listLocalProfiles() {
 }
 
 module.exports = {
+  findFreePort,
   openChrome,
   closeAdsPower,
   closeBrowser,
