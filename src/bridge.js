@@ -37,6 +37,15 @@ let heartbeat = null;           // every 20 s: "ping" to the gateway; a silent l
 // Also keeps the tunnel from closing an idle connection. No answer for 50 s = the line is dead (it can look open
 // for minutes): close it and reconnect.
 const HEARTBEAT_MS = 20000, DEAD_AFTER_MS = 50000;
+let lastAttempt = 0;
+// Safety net: whenever we should be connected but are not (and no retry is pending), try again every 30 s
+setInterval(() => {
+  if (!apiKey || manualDisconnect || reconnectTimer) return;
+  if (ws && ws.readyState === WebSocket.OPEN) return;
+  if (Date.now() - lastAttempt < 30000) return;
+  console.log('[bridge] Not connected — trying again');
+  connectToVPS(apiKey);
+}, 10000).unref?.();
 function startHeartbeat(sock) {
   stopHeartbeat();
   sock._lastSeen = Date.now();
@@ -70,8 +79,12 @@ function connectToVPS(key, url) {
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
   if (ws) { const old = ws; ws = null; try { old.close(); } catch (_) {} }
 
+  lastAttempt = Date.now();
+  // handshakeTimeout: a connect attempt that gets no answer (gateway restarting behind the tunnel) fails after 15 s
+  // and is retried, instead of waiting forever
   const sock = new WebSocket(gatewayWsUrl(gatewayUrl), {
     headers: { 'x-api-key': key },
+    handshakeTimeout: 15000,
   });
   ws = sock;
 
