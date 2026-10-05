@@ -31,6 +31,28 @@ let onEvent = null;
 let apiKey = null;
 let gatewayUrl = null;
 let manualDisconnect = false;   // user pressed Disconnect → don't auto-reconnect
+let heartbeat = null;           // every 20 s: "ping" to the gateway; a silent line is dropped and reconnected
+
+// Heartbeat as a normal message (WebSocket ping frames may not cross the Cloudflare tunnel; normal messages do).
+// Also keeps the tunnel from closing an idle connection. No answer for 50 s = the line is dead (it can look open
+// for minutes): close it and reconnect.
+const HEARTBEAT_MS = 20000, DEAD_AFTER_MS = 50000;
+function startHeartbeat(sock) {
+  stopHeartbeat();
+  sock._lastSeen = Date.now();
+  heartbeat = setInterval(() => {
+    if (sock !== ws) return stopHeartbeat();
+    // only judge silence once the gateway has shown it answers heartbeats (an older gateway does not)
+    if (sock._answersPing && Date.now() - sock._lastSeen > DEAD_AFTER_MS) {
+      console.log('[bridge] No answer from the gateway for 50 s — reconnecting');
+      try { sock.terminate(); } catch (_) {}
+      return;
+    }
+    try { sock.send(JSON.stringify({ type: 'ping', t: Date.now() })); } catch (_) {}
+    try { sock.ping(); } catch (_) {}
+  }, HEARTBEAT_MS);
+}
+function stopHeartbeat() { if (heartbeat) { clearInterval(heartbeat); heartbeat = null; } }
 
 // Track which profiles are currently open { name → { browser, page, port } }
 const openProfiles = new Map();
@@ -59,11 +81,15 @@ function connectToVPS(key, url) {
     // Register this launcher with the user's key
     ws.send(JSON.stringify({ type: 'register', apiKey: key, platform: process.platform }));
     console.log('[bridge] Connected to gateway, registered');
+    startHeartbeat(sock);
   });
+  sock.on('pong', () => { sock._lastSeen = Date.now(); });
 
   sock.on('message', async (raw) => {
+    sock._lastSeen = Date.now();
     let job;
     try { job = JSON.parse(raw.toString()); } catch (_) { return; }
+    if (job.type === 'pong') { sock._answersPing = true; return; }   // heartbeat answer
     if (job.type === 'registered') {                                       // gateway confirmation, not a job
       status.userId = job.userId || null;
       status.plan = job.plan || null;
@@ -81,6 +107,7 @@ function connectToVPS(key, url) {
 
   sock.on('close', (code, reason) => {
     if (sock !== ws) return;   // an older socket we replaced — ignore
+    stopHeartbeat();
     for (const [, sess] of cdpSessions) { try { sess.local.close(); } catch (_) {} }
     cdpSessions.clear();
     status.connected = false;
@@ -110,6 +137,7 @@ function scheduleReconnect() {
 
 function disconnect() {
   manualDisconnect = true;
+  stopHeartbeat();
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
   if (ws) { try { ws.close(); } catch (_) {} }
   ws = null;
