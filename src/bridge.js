@@ -269,6 +269,7 @@ async function ensureProfileOpen(job) {
     browserType: job.browser_type || 'chrome',
     adsPowerId: job.ads_power_id,
     ixProfileId: job.ix_profile_id,
+    mustExist: !!job.must_exist,
   };
 
   const { browser, page, context } = await openChrome(profile);
@@ -295,6 +296,7 @@ async function closeProfile(name) {
 //   VPS Playwright ⇄ gateway /cdp ⇄ (this WebSocket) ⇄ local Chrome DevTools
 // Chrome runs here: the user's IP, the user's accounts. No ports are opened to the internet.
 const http = require('http');
+const path = require('path');
 const cdpSessions = new Map();   // session → { local, profileName }
 
 function relaySend(obj) {
@@ -317,8 +319,11 @@ async function handleCdp(msg) {
   if (msg.type === 'cdp_open') {
     try {
       const p = msg.profile || {};
-      // p.dir is a path on the VPS, not on this PC — the folder is picked here by profile name
-      const opened = await ensureProfileOpen({ profile_name: p.name, profile_port: p.port, browser_type: p.browserType, ads_power_id: p.adsPowerId, ix_profile_id: p.ixProfileId });
+      // The engine sends one of YOUR saved profiles (Chrome profiles page). Its folder is the one you set there (a full
+      // path on this PC) or the folder by its name; a relative path is a VPS path → ignored. Automation never creates a
+      // new profile folder: one that was never opened here (so has no logins) is refused with what to do.
+      const dir = p.dir && path.isAbsolute(p.dir) && (process.platform !== 'win32' || /^[a-zA-Z]:[\\/]/.test(p.dir)) ? p.dir : undefined;
+      const opened = await ensureProfileOpen({ profile_name: p.name, profile_dir: dir, profile_port: p.port, browser_type: p.browserType, ads_power_id: p.adsPowerId, ix_profile_id: p.ixProfileId, must_exist: true });
       const url = await chromeWsUrl(opened.port);
       const local = new WebSocket(url, { perMessageDeflate: false, maxPayload: 512 * 1024 * 1024 });
       cdpSessions.set(session, { local, profileName: p.name });

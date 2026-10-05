@@ -224,6 +224,10 @@ function resolveProfileDir(profile) {
     const safe = String(profile.name || 'profile').replace(/[^a-zA-Z0-9_-]/g, '_');
     dir = path.join(PROFILES_BASE_DIR, safe);
   }
+  if (!fs.existsSync(dir) && profile.mustExist) {
+    throw new Error(`Chrome profile "${profile.name}" has never been opened on this PC, so it has no logins. ` +
+      'In the dashboard go to Chrome profiles, choose Open on it, log into claude.ai and your sites, then try again.');
+  }
   if (!fs.existsSync(dir)) {
     if (fs.existsSync(BASE_PROFILE_DIR)) {
       console.log(`[${profile.name}] Creating profile from base → ${dir}`);
