@@ -1,6 +1,6 @@
 {
   "name": "koneqtiseo-launcher",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "KoneqtiSEO Chrome Launcher — connects your PC to the SEO engine",
   "main": "src/main.js",
   "scripts": {
@@ -10,11 +10,11 @@
     "build-linux": "electron-builder --linux"
   },
   "dependencies": {
-    "ws": "^8.14.0",
-    "playwright": "^1.40.0"
+    "ws": "8.22.0",
+    "playwright": "1.63.0"
   },
   "devDependencies": {
-    "electron": "^28.0.0",
+    "electron": "33.4.11",
     "electron-builder": "^24.9.0"
   },
   "build": {
@@ -25,6 +25,10 @@
     "win": {
       "target": [{ "target": "nsis", "arch": ["x64"] }],
       "artifactName": "KoneqtiSEO-Launcher-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true, "createStartMenuShortcut": true, "shortcutName": "KoneqtiSEO Launcher", "runAfterFinish": true
     },
     "mac": {
       "target": [{ "target": "dmg", "arch": ["universal"] }],
