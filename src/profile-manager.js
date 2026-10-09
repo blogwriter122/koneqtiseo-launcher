@@ -215,6 +215,17 @@ function killProcessOnPort(port) {
   }
 }
 
+function checkNotEverydayChrome(dir, name) {
+  const d = path.resolve(dir);
+  const everyday = /[\\/](Google[\\/]Chrome( Beta| Dev| SxS)?|Chromium|Microsoft[\\/]Edge|BraveSoftware[\\/]Brave-Browser)[\\/]User Data$/i;
+  const isProfileInside = fs.existsSync(path.join(d, 'Preferences')) && fs.existsSync(path.join(path.dirname(d), 'Local State'));
+  if (everyday.test(d) || everyday.test(path.dirname(d)) || isProfileInside) {
+    throw new Error(`Chrome profile "${name}" points to a folder of your everyday Chrome (${d}). Automation cannot use that ` +
+      '(Chrome would open an empty profile, or refuse). In the dashboard → Chrome profiles → Edit, clear the folder box ' +
+      '(KoneqtiSEO then keeps its own folder), save, choose Open, and log into Google once.');
+  }
+}
+
 // Resolve a profile's data dir. If it doesn't exist, clone it from the base profile
 // (so it inherits Pinterest/ChatGPT/LabFlow logins). Existing dirs are used as-is.
 function resolveProfileDir(profile) {
@@ -223,6 +234,14 @@ function resolveProfileDir(profile) {
     // No explicit dir → auto folder under PROFILES_BASE_DIR by profile name
     const safe = String(profile.name || 'profile').replace(/[^a-zA-Z0-9_-]/g, '_');
     dir = path.join(PROFILES_BASE_DIR, safe);
+  }
+  // A folder INSIDE your everyday Chrome ("…\\User Data\\Profile 2") is not a Chrome of its own: Chrome would start a
+  // brand-new EMPTY profile inside it and the bots would search there (owner 9 Oct: "it opened a fresh profile").
+  // Chrome also refuses automation on the everyday "User Data" folder itself (Chrome 136+). Both are refused.
+  checkNotEverydayChrome(dir, profile.name);
+  if (fs.existsSync(dir) && profile.mustExist && !fs.existsSync(path.join(dir, 'Local State'))) {
+    throw new Error(`Chrome profile "${profile.name}": the folder ${dir} has no Chrome profile in it (it was never opened), so it has no logins. ` +
+      'In the dashboard go to Chrome profiles, choose Open on it, log into Google and your sites, then try again.');
   }
   if (!fs.existsSync(dir) && profile.mustExist) {
     throw new Error(`Chrome profile "${profile.name}" has never been opened on this PC, so it has no logins. ` +
