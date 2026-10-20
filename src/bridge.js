@@ -314,6 +314,33 @@ function chromeWsUrl(port) {
   });
 }
 
+// The engine's searches only need Chrome's DevTools port, not the launcher's own automation hookup (which can take up to
+// a minute more on a big profile — together over the gateway's wait, owner 20 Oct 2026: "profile1 did not start within
+// 90 seconds"). So: one start per profile at a time (two checks asking together share it), and ready as soon as
+// Chrome answers; the full hookup finishes in the background.
+const opening = new Map();    // profile name → promise of { port } while its Chrome starts
+const lastPort = new Map();   // profile name → the port its Chrome answered on
+const answers = (port) => chromeWsUrl(port).then(() => true, () => false);
+async function ensureProfileCdp(job) {
+  const name = job.profile_name || job.name;
+  for (const port of [openProfiles.get(name)?.port, lastPort.get(name)].filter(Boolean)) if (await answers(port)) return { port };
+  if (opening.has(name)) return opening.get(name);
+  const p = (async () => {
+    const port = job.profile_port || await findFreePort();
+    let failed = null;
+    ensureProfileOpen({ ...job, profile_port: port }).catch((e) => { failed = e; });
+    const t0 = Date.now();
+    while (Date.now() - t0 < 75000) {
+      if (failed) throw failed;
+      if (await answers(port)) { lastPort.set(name, port); return { port }; }
+      await new Promise(r => setTimeout(r, 500));
+    }
+    throw failed || new Error(`Chrome profile "${name}" did not start on this PC within 75 seconds. If that profile is already open in a normal Chrome window, close that window and try again.`);
+  })();
+  opening.set(name, p);
+  try { return await p; } finally { opening.delete(name); }
+}
+
 async function handleCdp(msg) {
   const { session } = msg;
   if (msg.type === 'cdp_open') {
@@ -323,7 +350,7 @@ async function handleCdp(msg) {
       // path on this PC) or the folder by its name; a relative path is a VPS path → ignored. Automation never creates a
       // new profile folder: one that was never opened here (so has no logins) is refused with what to do.
       const dir = p.dir && path.isAbsolute(p.dir) && (process.platform !== 'win32' || /^[a-zA-Z]:[\\/]/.test(p.dir)) ? p.dir : undefined;
-      const opened = await ensureProfileOpen({ profile_name: p.name, profile_dir: dir, profile_port: p.port, browser_type: p.browserType, ads_power_id: p.adsPowerId, ix_profile_id: p.ixProfileId, must_exist: true });
+      const opened = await ensureProfileCdp({ profile_name: p.name, profile_dir: dir, profile_port: p.port, browser_type: p.browserType, ads_power_id: p.adsPowerId, ix_profile_id: p.ixProfileId, must_exist: true });
       const url = await chromeWsUrl(opened.port);
       const local = new WebSocket(url, { perMessageDeflate: false, maxPayload: 512 * 1024 * 1024 });
       cdpSessions.set(session, { local, profileName: p.name });
