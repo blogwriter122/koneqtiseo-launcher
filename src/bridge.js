@@ -11,6 +11,7 @@
  */
 
 const WebSocket = require('ws');
+const LAUNCHER_VERSION = (() => { try { return require('../package.json').version; } catch (_) { return null; } })();
 const {
   openChrome, closeBrowser, resolveProfileDir, cleanStaleLocks,
   markProfileExitClean, listLocalProfiles, findFreePort,
@@ -92,7 +93,7 @@ function connectToVPS(key, url) {
     status.connected = true;
     onEvent?.('status', status);
     // Register this launcher with the user's key
-    ws.send(JSON.stringify({ type: 'register', apiKey: key, platform: process.platform }));
+    ws.send(JSON.stringify({ type: 'register', apiKey: key, platform: process.platform, version: LAUNCHER_VERSION }));   // the dashboard shows it (Settings → Launcher)
     console.log('[bridge] Connected to gateway, registered');
     startHeartbeat(sock);
   });
