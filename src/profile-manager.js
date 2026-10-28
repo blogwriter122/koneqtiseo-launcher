@@ -478,7 +478,14 @@ async function openRegularChrome(profile) {
     // Suppress the first-run "make Chrome your default / sign in" promos that
     // can also steal focus on a fresh-ish profile.
     // Chrome only honours the LAST --disable-features flag, so list them together
-    '--disable-features=InfiniteSessionRestore,ChromeWhatsNewUI',
+    // CalculateNativeWinOcclusion: Windows marks a Chrome window covered by other windows as hidden and slows it down
+    '--disable-features=InfiniteSessionRestore,ChromeWhatsNewUI,CalculateNativeWinOcclusion',
+    // owner 28 Oct 2026 (Google pages taking 45 s+ to load during scans): Chrome slows down tabs and windows that are in
+    // the background, minimized or covered — with several profiles open, most of them are. These keep every profile at
+    // full speed while the engine searches in it
+    '--disable-backgrounding-occluded-windows',
+    '--disable-renderer-backgrounding',
+    '--disable-background-timer-throttling',
     '--no-service-autorun',
     '--password-store=basic',
   ];
