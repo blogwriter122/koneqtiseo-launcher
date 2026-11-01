@@ -37,7 +37,9 @@ let heartbeat = null;           // every 20 s: "ping" to the gateway; a silent l
 // Heartbeat as a normal message (WebSocket ping frames may not cross the Cloudflare tunnel; normal messages do).
 // Also keeps the tunnel from closing an idle connection. No answer for 50 s = the line is dead (it can look open
 // for minutes): close it and reconnect.
-const HEARTBEAT_MS = 20000, DEAD_AFTER_MS = 50000;
+// tests may shorten the timings (LAUNCHER_HEARTBEAT_MS …); the app uses the defaults
+const HEARTBEAT_MS = Number(process.env.LAUNCHER_HEARTBEAT_MS) || 20000, DEAD_AFTER_MS = Number(process.env.LAUNCHER_DEAD_AFTER_MS) || 50000,
+  REGISTER_WAIT_MS = Number(process.env.LAUNCHER_REGISTER_WAIT_MS) || 30000;
 let lastAttempt = 0;
 // Safety net: whenever we should be connected but are not (and no retry is pending), try again every 30 s
 setInterval(() => {
@@ -55,6 +57,13 @@ function startHeartbeat(sock) {
     // only judge silence once the gateway has shown it answers heartbeats (an older gateway does not)
     if (sock._answersPing && Date.now() - sock._lastSeen > DEAD_AFTER_MS) {
       console.log('[bridge] No answer from the gateway for 50 s — reconnecting');
+      try { sock.terminate(); } catch (_) {}
+      return;
+    }
+    // owner 1 Nov 2026: "Connected" was shown while the gateway had no record of us (registration lost) — every scan failed
+    // until a manual reconnect. Open but not registered after 30 s = reconnect (registers again).
+    if (!sock._registered && Date.now() - (sock._openedAt || Date.now()) > REGISTER_WAIT_MS) {
+      console.log('[bridge] Line open but not registered with the gateway for 30 s — reconnecting');
       try { sock.terminate(); } catch (_) {}
       return;
     }
@@ -90,7 +99,11 @@ function connectToVPS(key, url) {
   ws = sock;
 
   sock.on('open', () => {
-    status.connected = true;
+    // "Connected" only once the gateway confirms the registration ('registered' below); until then: connecting
+    sock._openedAt = Date.now();
+    sock._registered = false;
+    status.connected = false;
+    status.connecting = true;
     onEvent?.('status', status);
     // Register this launcher with the user's key
     ws.send(JSON.stringify({ type: 'register', apiKey: key, platform: process.platform, version: LAUNCHER_VERSION }));   // the dashboard shows it (Settings → Launcher)
@@ -103,8 +116,23 @@ function connectToVPS(key, url) {
     sock._lastSeen = Date.now();
     let job;
     try { job = JSON.parse(raw.toString()); } catch (_) { return; }
-    if (job.type === 'pong') { sock._answersPing = true; return; }   // heartbeat answer
+    if (job.type === 'pong') {   // heartbeat answer
+      sock._answersPing = true;
+      // the gateway says this line is open but it has no registration for it (a newer gateway sends registered)
+      if (job.registered === false && sock._registered) {
+        console.log('[bridge] The gateway lost our registration — reconnecting');
+        sock._registered = false;
+        status.connected = false;
+        onEvent?.('status', status);
+        try { sock.terminate(); } catch (_) {}
+      }
+      return;
+    }
     if (job.type === 'registered') {                                       // gateway confirmation, not a job
+      sock._registered = true;
+      status.connected = true;
+      status.connecting = false;
+      status.error = null;
       status.userId = job.userId || null;
       status.plan = job.plan || null;
       onEvent?.('status', status);

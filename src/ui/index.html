@@ -128,6 +128,12 @@
         document.getElementById('statusDot').classList.add('connected');
         document.getElementById('connectBtn').textContent = 'Disconnect';
         document.getElementById('connectBtn').className = 'btn btn-danger';
+      } else if (data.connecting && !data.error) {
+        // the line is open; waiting for KoneqtiSEO to confirm this launcher (a few seconds) — not "connected" yet
+        setStatus('Connecting… waiting for KoneqtiSEO to confirm.', '');
+        document.getElementById('statusDot').classList.remove('connected');
+        document.getElementById('connectBtn').textContent = 'Disconnect';
+        document.getElementById('connectBtn').className = 'btn btn-danger';
       } else {
         setDisconnected(data.error ? `Not connected: ${data.error}. Copy a new key from koneqtiseo.com/settings.` : 'Not connected.');
       }
