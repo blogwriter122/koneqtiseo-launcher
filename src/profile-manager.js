@@ -701,6 +701,8 @@ module.exports = {
   // Exposed so the manual profile launcher opens the EXACT same folder the bot
   // uses (and marks a clean exit so no "Restore pages" bubble appears).
   resolveProfileDir,
+  killChromeUsingDir,
+  killProcessOnPort,
   markProfileExitClean,
   cleanStaleLocks,
   killAllBotChrome,

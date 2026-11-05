@@ -14,7 +14,7 @@ const WebSocket = require('ws');
 const LAUNCHER_VERSION = (() => { try { return require('../package.json').version; } catch (_) { return null; } })();
 const {
   openChrome, closeBrowser, resolveProfileDir, cleanStaleLocks,
-  markProfileExitClean, listLocalProfiles, findFreePort,
+  markProfileExitClean, listLocalProfiles, findFreePort, killChromeUsingDir, killProcessOnPort,
 } = require('./profile-manager');
 
 const DEFAULT_GATEWAY_WS = process.env.GATEWAY_WS || 'wss://gateway.koneqtiseo.com/ws';
@@ -370,6 +370,34 @@ async function ensureProfileCdp(job) {
   try { return await p; } finally { opening.delete(name); }
 }
 
+// owner 5 Nov 2026 (a scan stalled for hours: "Chrome could not open … Timeout 130000ms exceeded" with the relay
+// connected): Chrome's DevTools port answered, but the browser itself was frozen — every command hung. Before saying
+// "ready", Chrome must answer one command (Browser.getVersion) within 15 s; a frozen profile Chrome is closed and started
+// again once; still frozen → a clear reason goes back to the engine instead of a silent 2-minute hang.
+const PROBE_ID = 2147480001;
+function openLocal(url) {
+  return new Promise((resolve, reject) => {
+    const local = new WebSocket(url, { perMessageDeflate: false, maxPayload: 512 * 1024 * 1024 });
+    const t = setTimeout(() => { try { local.terminate(); } catch (_) {} reject(new Error('frozen')); }, 15000);
+    local.once('error', (e) => { clearTimeout(t); reject(e); });
+    local.once('open', () => {
+      const onMsg = (data) => {
+        let m; try { m = JSON.parse(data.toString()); } catch (_) { return; }
+        if (m.id !== PROBE_ID) return;
+        clearTimeout(t); local.off('message', onMsg); resolve(local);
+      };
+      local.on('message', onMsg);
+      local.send(JSON.stringify({ id: PROBE_ID, method: 'Browser.getVersion' }));
+    });
+  });
+}
+/** close a profile's frozen Chrome (its debug port and its folder), forget it — the next open starts it fresh */
+function restartFrozen(name, port, dir) {
+  try { killProcessOnPort(port); } catch (_) {}
+  try { killChromeUsingDir(resolveProfileDir({ name, dir })); } catch (_) {}
+  openProfiles.delete(name); lastPort.delete(name);
+}
+
 async function handleCdp(msg) {
   const { session } = msg;
   if (msg.type === 'cdp_open') {
@@ -379,17 +407,24 @@ async function handleCdp(msg) {
       // path on this PC) or the folder by its name; a relative path is a VPS path → ignored. Automation never creates a
       // new profile folder: one that was never opened here (so has no logins) is refused with what to do.
       const dir = p.dir && path.isAbsolute(p.dir) && (process.platform !== 'win32' || /^[a-zA-Z]:[\\/]/.test(p.dir)) ? p.dir : undefined;
-      const opened = await ensureProfileCdp({ profile_name: p.name, profile_dir: dir, profile_port: p.port, browser_type: p.browserType, ads_power_id: p.adsPowerId, ix_profile_id: p.ixProfileId, must_exist: true });
-      const url = await chromeWsUrl(opened.port);
-      const local = new WebSocket(url, { perMessageDeflate: false, maxPayload: 512 * 1024 * 1024 });
+      const job = { profile_name: p.name, profile_dir: dir, profile_port: p.port, browser_type: p.browserType, ads_power_id: p.adsPowerId, ix_profile_id: p.ixProfileId, must_exist: true };
+      let local = null;
+      for (let attempt = 1; attempt <= 2 && !local; attempt++) {
+        const opened = await ensureProfileCdp(job);
+        try { local = await openLocal(await chromeWsUrl(opened.port)); }
+        catch (e) {
+          if (attempt === 2) throw new Error(`Chrome profile "${p.name}" is not responding on this PC (frozen) — it was restarted but still does not answer. Close every window of that profile (Task Manager → Google Chrome → End task), then try again.`);
+          onEvent?.('relay', { session, profile: p.name, state: 'restarting a frozen Chrome' });
+          restartFrozen(p.name, opened.port, dir);
+          job.profile_port = undefined;   // a fresh port for the fresh Chrome
+        }
+      }
       cdpSessions.set(session, { local, profileName: p.name });
-      local.on('open', () => {
-        relaySend({ type: 'cdp_ready', session });
-        onEvent?.('relay', { session, profile: p.name, state: 'connected' });
-      });
       local.on('message', (data) => relaySend({ type: 'cdp_msg', session, data: data.toString() }));
       local.on('close', () => { cdpSessions.delete(session); relaySend({ type: 'cdp_closed', session }); });
       local.on('error', (e) => relaySend({ type: 'cdp_error', session, error: e.message }));
+      relaySend({ type: 'cdp_ready', session });
+      onEvent?.('relay', { session, profile: p.name, state: 'connected' });
     } catch (e) {
       relaySend({ type: 'cdp_error', session, error: e.message });
     }
@@ -401,4 +436,4 @@ async function handleCdp(msg) {
   if (msg.type === 'cdp_close') { try { sess.local.close(); } catch (_) {} cdpSessions.delete(session); }
 }
 
-module.exports = { connectToVPS, disconnect, getStatus, setEventHandler };
+module.exports = { connectToVPS, disconnect, getStatus, setEventHandler, _test: { openLocal } };
