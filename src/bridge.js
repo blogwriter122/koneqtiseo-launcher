@@ -28,6 +28,7 @@ function gatewayWsUrl(url) {
 let ws = null;
 let status = { connected: false, jobsCompleted: 0, lastJob: null, openProfiles: [] };
 let reconnectTimer = null;
+let attempts = 0;               // reconnects since the last confirmed registration (backoff, security audit 15 Nov 2026)
 let onEvent = null;
 let apiKey = null;
 let gatewayUrl = null;
@@ -83,6 +84,7 @@ function getStatus() { return { ...status, openProfiles: Array.from(openProfiles
  * Connect to the VPS gateway
  */
 function connectToVPS(key, url) {
+  if (key !== apiKey || url !== undefined) attempts = 0;   // a click on Connect starts the backoff again
   apiKey = key;
   if (url !== undefined) gatewayUrl = url;
   manualDisconnect = false;
@@ -130,6 +132,7 @@ function connectToVPS(key, url) {
     }
     if (job.type === 'registered') {                                       // gateway confirmation, not a job
       sock._registered = true;
+      attempts = 0;
       status.connected = true;
       status.connecting = false;
       status.error = null;
@@ -139,6 +142,16 @@ function connectToVPS(key, url) {
       return;
     }
     if (job.type === 'error') {                                            // gateway refused us (e.g. invalid key)
+      // the same key connected from another PC: that one has the line now. Stop here (no reconnect fight between
+      // two PCs); the user presses Connect on the PC that should do the work.
+      if (job.error === 'replaced') {
+        manualDisconnect = true;
+        status.error = 'This API key is now in use by the launcher on another PC. Press Connect here to use this PC instead';
+        status.connected = false; status.connecting = false;
+        onEvent?.('status', status);
+        try { sock.close(); } catch (_) {}
+        return;
+      }
       status.error = job.error === 'invalid_key' ? 'API key not recognised' : job.error;
       onEvent?.('status', status);
       return;
@@ -154,10 +167,10 @@ function connectToVPS(key, url) {
     cdpSessions.clear();
     status.connected = false;
     // 4001 = gateway rejected the key (unknown or revoked): retrying won't help
-    status.error = code === 4001 ? (reason?.toString() || 'API key rejected') : null;
+    if (code === 4001) status.error = reason?.toString() || 'API key rejected';
+    else if (!manualDisconnect) status.error = null;   // keep the "in use on another PC" message
     onEvent?.('status', status);
     if (manualDisconnect || code === 4001) { console.log(`[bridge] Disconnected (${code})`); return; }
-    console.log('[bridge] Disconnected — reconnecting in 5s');
     scheduleReconnect();
   });
 
@@ -169,12 +182,17 @@ function connectToVPS(key, url) {
   });
 }
 
+// 5 s, 10 s, 20 s, 40 s, then every 60 s, each ±25 % at random — after a gateway restart the launchers come back
+// spread out instead of all in the same second
+function reconnectDelay(n) { return Math.round(Math.min(60000, 5000 * 2 ** Math.min(n, 4)) * (0.75 + Math.random() * 0.5)); }
 function scheduleReconnect() {
   if (reconnectTimer) return;
+  const ms = reconnectDelay(attempts++);
+  console.log(`[bridge] Disconnected — reconnecting in ${Math.round(ms / 1000)}s`);
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
     if (apiKey && !manualDisconnect) connectToVPS(apiKey);
-  }, 5000);
+  }, ms);
 }
 
 function disconnect() {
@@ -377,7 +395,7 @@ async function ensureProfileCdp(job) {
 const PROBE_ID = 2147480001;
 function openLocal(url) {
   return new Promise((resolve, reject) => {
-    const local = new WebSocket(url, { perMessageDeflate: false, maxPayload: 512 * 1024 * 1024 });
+    const local = new WebSocket(url, { perMessageDeflate: false, maxPayload: 128 * 1024 * 1024 });   // a full-page screenshot fits
     const t = setTimeout(() => { try { local.terminate(); } catch (_) {} reject(new Error('frozen')); }, 15000);
     local.once('error', (e) => { clearTimeout(t); reject(e); });
     local.once('open', () => {
@@ -436,4 +454,5 @@ async function handleCdp(msg) {
   if (msg.type === 'cdp_close') { try { sess.local.close(); } catch (_) {} cdpSessions.delete(session); }
 }
 
-module.exports = { connectToVPS, disconnect, getStatus, setEventHandler, _test: { openLocal } };
+module.exports = {
+  reconnectDelay, connectToVPS, disconnect, getStatus, setEventHandler, _test: { openLocal } };

@@ -43,14 +43,20 @@ function createWindow() {
     height: 600,
     resizable: false,
     title: 'KoneqtiSEO Launcher',
+    // security audit 15 Nov 2026: no Node in the window; it talks to the app only through preload.js
     webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false,
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      preload: path.join(__dirname, 'preload.js'),
     },
     icon: path.join(__dirname, '../assets/icon.png'),
   });
 
   mainWindow.loadFile(path.join(__dirname, 'ui/index.html'));
+  // the window never navigates away or opens other windows (links go to the real browser)
+  mainWindow.webContents.on('will-navigate', (e) => e.preventDefault());
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   mainWindow.setMenuBarVisibility(false);
 
   mainWindow.on('close', (e) => {
@@ -82,19 +88,19 @@ function createTray() {
 }
 
 // IPC handlers — UI communicates with main process
-ipcMain.handle('get-settings', () => store.get());
-ipcMain.handle('save-settings', (_, settings) => {
-  store.save(settings);
-  return { ok: true };
-});
+// the window never receives the saved key itself, only whether there is one and its last 4 characters
+ipcMain.handle('get-settings', () => { const s = store.get(); return { gatewayUrl: s.gatewayUrl, hasKey: !!s.apiKey, last4: s.apiKey ? s.apiKey.slice(-4) : '' }; });
 // Bridge events (status, jobs, relay) → UI window
 if (setEventHandler) setEventHandler((event, data) => {
   mainWindow?.webContents?.send('bridge-event', { event, data });
 });
 
-ipcMain.handle('connect', async (_, { apiKey, gatewayUrl }) => {
-  store.save({ apiKey, ...(gatewayUrl ? { gatewayUrl } : {}) });
-  connectToVPS(apiKey, gatewayUrl);
+ipcMain.handle('connect', async (_, { apiKey, gatewayUrl } = {}) => {
+  const key = String(apiKey || '').trim() || store.get().apiKey;   // empty field = the saved key
+  if (!key) return { ok: false, error: 'Paste your API key first.' };
+  const url = typeof gatewayUrl === 'string' && /^wss?:\/\//.test(gatewayUrl) ? gatewayUrl : undefined;
+  store.save({ apiKey: key, ...(url ? { gatewayUrl: url } : {}) });
+  connectToVPS(key, url);
   return { ok: true };
 });
 ipcMain.handle('disconnect', () => disconnect());

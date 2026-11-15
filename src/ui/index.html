@@ -76,7 +76,7 @@
         Keep this app running while jobs execute.
       </p>
       <p style="font-size: 12px; color: #555; margin-top: 8px;">
-        Get your API key at <a href="https://koneqtiseo.com/settings" onclick="require('electron').shell.openExternal('https://koneqtiseo.com/settings'); return false;">koneqtiseo.com/settings</a>
+        Get your API key at <a href="https://koneqtiseo.com/settings" onclick="window.launcher.openSettingsPage(); return false;">koneqtiseo.com/settings</a>
       </p>
     </div>
   </div>
@@ -84,17 +84,21 @@
   <div class="footer">KoneqtiSEO Launcher — minimizes to system tray when closed</div>
 
   <script>
-    const { ipcRenderer } = require('electron');
+    // no Node here (contextIsolation): window.launcher comes from src/preload.js
+    const ipcRenderer = { invoke: (c, d) => window.launcher.invoke(c, d) };
     let connected = false;
 
     // Load saved settings
     ipcRenderer.invoke('get-version').then(v => { document.getElementById('launcher-version').textContent = 'Launcher v' + v; });
+    // the window never gets the saved key back, only its last 4 characters (the key is stored encrypted)
+    let hasKey = false;
     ipcRenderer.invoke('get-settings').then(s => {
-      if (s.apiKey) document.getElementById('apiKey').value = s.apiKey;
+      hasKey = !!s.hasKey;
+      if (s.hasKey) document.getElementById('apiKey').placeholder = `Saved key ••••${s.last4} — paste a new key to change it`;
       if (s.gatewayUrl) document.getElementById('gatewayUrl').value = s.gatewayUrl;
     });
 
-    document.getElementById('platform').textContent = process.platform;
+    document.getElementById('platform').textContent = window.launcher.platform;
 
     // Current bridge state (the launcher may already be connected with the saved key)
     ipcRenderer.invoke('get-status').then(applyStatus);
@@ -109,7 +113,7 @@
       const apiKey = document.getElementById('apiKey').value.trim();
       const gatewayUrl = document.getElementById('gatewayUrl').value.trim();
 
-      if (!apiKey) {
+      if (!apiKey && !hasKey) {
         setStatus('Please enter your API key.', 'err');
         return;
       }
@@ -140,7 +144,7 @@
     }
 
     // The main process forwards every bridge event on one channel
-    ipcRenderer.on('bridge-event', (_, { event, data }) => {
+    window.launcher.onEvent(({ event, data }) => {
       if (event === 'status') applyStatus(data);
       if (event === 'job') {
         const count = parseInt(document.getElementById('jobCount').textContent || '0') + 1;

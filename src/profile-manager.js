@@ -309,7 +309,7 @@ async function waitForCDP(port, timeoutMs = 30000) {
 async function openAdsPower(profile) {
   // profile.adsPowerId = the AdsPower user_id
   console.log(`[${profile.name}] Opening AdsPower profile ${profile.adsPowerId}...`);
-  const res = await httpGet(`${ADSPOWER_API}/api/v1/browser/start?user_id=${profile.adsPowerId}`);
+  const res = await httpGet(`${ADSPOWER_API}/api/v1/browser/start?user_id=${encodeURIComponent(profile.adsPowerId)}`);
   if (res.code !== 0) throw new Error(`AdsPower error: ${res.msg}`);
 
   // AdsPower returns the CDP websocket endpoint
@@ -325,7 +325,7 @@ async function openAdsPower(profile) {
 async function openIxBrowser(profile) {
   // profile.ixProfileId = the iX browser profile id
   console.log(`[${profile.name}] Opening iX profile ${profile.ixProfileId}...`);
-  const res = await httpGet(`${IXBROWSER_API}/api/v2/profile-open?profile_id=${profile.ixProfileId}`);
+  const res = await httpGet(`${IXBROWSER_API}/api/v2/profile-open?profile_id=${encodeURIComponent(profile.ixProfileId)}`);
   if (!res.data || !res.data.ws) throw new Error(`iX Browser error: ${JSON.stringify(res)}`);
 
   const wsEndpoint = res.data.ws;
@@ -572,7 +572,7 @@ async function openChrome(profile) {
 // ── Close AdsPower profile (call when done) ───────────────────────
 async function closeAdsPower(profile) {
   try {
-    await httpGet(`${ADSPOWER_API}/api/v1/browser/stop?user_id=${profile.adsPowerId}`);
+    await httpGet(`${ADSPOWER_API}/api/v1/browser/stop?user_id=${encodeURIComponent(profile.adsPowerId)}`);
     console.log(`[${profile.name}] AdsPower profile closed`);
   } catch (e) {
     console.log(`[${profile.name}] AdsPower close error: ${e.message}`);
@@ -668,6 +668,8 @@ async function listLocalProfiles() {
     try {
       if (!fs.existsSync(base)) continue;
       for (const entry of fs.readdirSync(base)) {
+        // outside the profiles folder only old "botdata_" profiles count — nothing else on the drive is looked at
+        if (base !== PROFILES_BASE_DIR && !entry.startsWith('botdata_')) continue;
         const full = path.join(base, entry);
         let isDir = false;
         try { isDir = fs.statSync(full).isDirectory(); } catch (_) {}
